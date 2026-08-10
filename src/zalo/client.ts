@@ -27,6 +27,7 @@ const defaultZaloFactory: ZaloFactory = (options) => {
 export interface IZaloClientOptions {
   logging?: boolean;
   selfListen?: boolean;
+  maxQrRetries?: number;
 }
 
 /**
@@ -34,18 +35,32 @@ export interface IZaloClientOptions {
  */
 export class ZaloClient {
   private zaloInstance: any;
-  private capturedCredentials: CapturedCredentials | null = null;
+  private loginEpoch = 0;
+  private activeLoginAbort: ((reason: Error) => void) | null = null;
   public readonly options: Required<IZaloClientOptions>;
 
   constructor(
     options: IZaloClientOptions = {},
     zaloFactory: ZaloFactory = defaultZaloFactory
   ) {
+    if (
+      options.maxQrRetries !== undefined &&
+      (!Number.isInteger(options.maxQrRetries) || options.maxQrRetries < 0)
+    ) {
+      throw new Error('maxQrRetries must be a non-negative integer');
+    }
+
     this.options = {
       logging: options.logging ?? false,
       selfListen: options.selfListen ?? true,
+      maxQrRetries: options.maxQrRetries ?? 2,
     };
-    this.zaloInstance = zaloFactory(this.options);
+
+    // Pass only logging and selfListen to the zca-js factory
+    this.zaloInstance = zaloFactory({
+      logging: this.options.logging,
+      selfListen: this.options.selfListen,
+    });
   }
 
   /**
@@ -56,13 +71,46 @@ export class ZaloClient {
   public async loginQR(
     onQrEvent?: (event: ZaloQrEvent) => void
   ): Promise<ZaloLoginResult> {
-    this.capturedCredentials = null;
+    // Actively terminate any previously active login attempt on this client instance
+    if (this.activeLoginAbort) {
+      this.activeLoginAbort(
+        new Error('QR login was superseded by a newer login attempt')
+      );
+      this.activeLoginAbort = null;
+    }
 
-    const api = await this.zaloInstance.loginQR({}, (event: any) => {
-      if (!event) return;
+    const epoch = ++this.loginEpoch;
+
+    let capturedCredentials: CapturedCredentials | null = null;
+    let retryCount = 0;
+    let isWaitingForRetry = false;
+    let isTerminal = false;
+
+    let rejectTerminal!: (reason: Error) => void;
+    const terminalPromise = new Promise<never>((_, reject) => {
+      rejectTerminal = reject;
+    });
+    // Suppress unhandled rejection warning if normal flow resolves first or when aborted
+    terminalPromise.catch(() => {});
+
+    const triggerTerminal = (err: Error) => {
+      if (isTerminal || epoch !== this.loginEpoch) return;
+      isTerminal = true;
+      rejectTerminal(err);
+    };
+
+    this.activeLoginAbort = (reason: Error) => {
+      triggerTerminal(reason);
+    };
+
+    const sdkPromise = this.zaloInstance.loginQR({}, (event: any) => {
+      if (!event || isTerminal || epoch !== this.loginEpoch) {
+        return;
+      }
 
       switch (event.type) {
         case 0: { // QRCodeGenerated
+          isWaitingForRetry = false;
           if (onQrEvent && event.data?.image) {
             onQrEvent({
               type: 'qr_generated',
@@ -72,11 +120,35 @@ export class ZaloClient {
           break;
         }
         case 1: { // QRCodeExpired
-          if (onQrEvent) {
-            onQrEvent({
-              type: 'qr_expired',
-            });
+          if (isWaitingForRetry) {
+            break;
           }
+
+          if (
+            retryCount < this.options.maxQrRetries &&
+            typeof event.actions?.retry === 'function'
+          ) {
+            isWaitingForRetry = true;
+            retryCount++;
+            try {
+              event.actions.retry();
+            } catch (retryErr: any) {
+              if (onQrEvent) {
+                onQrEvent({ type: 'qr_expired' });
+              }
+              const err =
+                retryErr instanceof Error
+                  ? retryErr
+                  : new Error(String(retryErr));
+              triggerTerminal(err);
+            }
+            break;
+          }
+
+          if (onQrEvent) {
+            onQrEvent({ type: 'qr_expired' });
+          }
+          triggerTerminal(new Error('QR login expired'));
           break;
         }
         case 2: { // QRCodeScanned
@@ -96,11 +168,12 @@ export class ZaloClient {
               code: event.data?.code,
             });
           }
+          triggerTerminal(new Error('QR login was declined'));
           break;
         }
         case 4: { // GotLoginInfo
           if (event.data?.cookie && event.data?.imei && event.data?.userAgent) {
-            this.capturedCredentials = {
+            capturedCredentials = {
               cookie: event.data.cookie,
               imei: event.data.imei,
               userAgent: event.data.userAgent,
@@ -114,29 +187,55 @@ export class ZaloClient {
       }
     });
 
-    if (!this.capturedCredentials) {
-      throw new Error(
-        'QR login completed but session credentials were not captured'
-      );
-    }
+    const executionPromise = (async () => {
+      const api = await sdkPromise;
 
-    if (!api || typeof api.getOwnId !== 'function') {
-      throw new Error(
-        'QR login returned invalid API handle without getOwnId method'
-      );
-    }
+      if (epoch !== this.loginEpoch) {
+        throw new Error('QR login was superseded by a newer login attempt');
+      }
 
-    const zaloUid = await api.getOwnId();
-    if (!zaloUid || typeof zaloUid !== 'string' || zaloUid.trim() === '') {
-      throw new Error(
-        'QR login failed: getOwnId returned an invalid or empty UID'
-      );
-    }
+      if (isTerminal) {
+        throw new Error('QR login failed: session reached a terminal state');
+      }
 
-    return {
-      api,
-      zaloUid: zaloUid.trim(),
-      credentials: this.capturedCredentials,
-    };
+      if (!capturedCredentials) {
+        throw new Error(
+          'QR login completed but session credentials were not captured'
+        );
+      }
+
+      if (!api || typeof api.getOwnId !== 'function') {
+        throw new Error(
+          'QR login returned invalid API handle without getOwnId method'
+        );
+      }
+
+      const zaloUid = await api.getOwnId();
+      if (!zaloUid || typeof zaloUid !== 'string' || zaloUid.trim() === '') {
+        throw new Error(
+          'QR login failed: getOwnId returned an invalid or empty UID'
+        );
+      }
+
+      return {
+        api,
+        zaloUid: zaloUid.trim(),
+        credentials: capturedCredentials,
+      };
+    })();
+    executionPromise.catch(() => {});
+
+    try {
+      return await Promise.race([executionPromise, terminalPromise]);
+    } catch (err) {
+      if (epoch !== this.loginEpoch) {
+        throw new Error('QR login was superseded by a newer login attempt');
+      }
+      throw err;
+    } finally {
+      if (this.activeLoginAbort && epoch === this.loginEpoch) {
+        this.activeLoginAbort = null;
+      }
+    }
   }
 }
