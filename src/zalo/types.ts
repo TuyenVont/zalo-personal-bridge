@@ -28,3 +28,44 @@ export interface IZaloConnectionReader {
   getInstance(accountId: string): ZaloInstance | null;
   getStatus(accountId: string): ZaloAccountStatus;
 }
+
+/**
+ * Internal credentials captured during authentication.
+ * Must NEVER be logged or exposed over HTTP API.
+ */
+export interface CapturedCredentials {
+  cookie: any;
+  imei: string;
+  userAgent: string;
+}
+
+/**
+ * Normalized public QR lifecycle events emitted during login.
+ * Note: Credentials are NOT exposed in QR events.
+ */
+export type ZaloQrEvent =
+  | {
+      type: 'qr_generated';
+      qrImage: string;
+    }
+  | {
+      type: 'qr_expired';
+    }
+  | {
+      type: 'qr_scanned';
+      displayName?: string;
+      avatar?: string;
+    }
+  | {
+      type: 'qr_declined';
+      code?: string;
+    };
+
+/**
+ * Successful QR login result payload.
+ */
+export interface ZaloLoginResult {
+  api: any;
+  zaloUid: string;
+  credentials: CapturedCredentials;
+}
