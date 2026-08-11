@@ -9,7 +9,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/**/*.test.ts",
-    "smoke:qr": "node --import tsx scripts/smoke-qr-login.ts"
+    "smoke:qr": "node --import tsx scripts/smoke-qr-login.ts",
+    "smoke:session": "node --import tsx scripts/smoke-session-reconnect.ts"
   },
   "keywords": [
     "zalo",
