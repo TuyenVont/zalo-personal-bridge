@@ -47,7 +47,7 @@ describe('ZaloClient', () => {
     const mockFactory = () => ({
       loginQR: async (_opts: any, callback: any) => {
         callback({ type: 1, data: null });
-        return new Promise(() => {}); // Remains pending
+        return new Promise(() => { }); // Remains pending
       },
     });
 
@@ -95,7 +95,7 @@ describe('ZaloClient', () => {
     const mockFactory = () => ({
       loginQR: async (_opts: any, callback: any) => {
         callback({ type: 3, data: { code: 'declined-reason-1' } });
-        return new Promise(() => {}); // Remains pending
+        return new Promise(() => { }); // Remains pending
       },
     });
 
@@ -368,7 +368,7 @@ describe('ZaloClient', () => {
         };
         // First expiration
         callback({ type: 1, data: null, actions: { retry: retryAction } });
-        return new Promise(() => {}); // Pending
+        return new Promise(() => { }); // Pending
       },
     });
 
@@ -392,7 +392,7 @@ describe('ZaloClient', () => {
           callback({ type: 1, data: null, actions: { retry: retryAction } });
         };
         callback({ type: 1, data: null, actions: { retry: retryAction } });
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -412,7 +412,7 @@ describe('ZaloClient', () => {
     const mockFactory = () => ({
       loginQR: async (_opts: any, callback: any) => {
         callback({ type: 1, data: null }); // No retry action
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -430,7 +430,7 @@ describe('ZaloClient', () => {
       loginQR: async (_opts: any, callback: any) => {
         callbackRef = callback;
         callback({ type: 1, data: null }); // No retry action provided by SDK
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -459,7 +459,7 @@ describe('ZaloClient', () => {
           data: { code: 'user_declined' },
           actions: { retry: () => { retryCalls++; } },
         });
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -482,7 +482,7 @@ describe('ZaloClient', () => {
       loginQR: async (_opts: any, callback: any) => {
         callbackRef = callback;
         callback({ type: 1, data: null });
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -507,7 +507,7 @@ describe('ZaloClient', () => {
       loginQR: async (_opts: any, callback: any) => {
         callbackRef = callback;
         callback({ type: 3, data: { code: 'declined' } });
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -535,7 +535,7 @@ describe('ZaloClient', () => {
             },
           },
         });
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -564,7 +564,7 @@ describe('ZaloClient', () => {
         } else {
           newCallback = callback;
         }
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -625,45 +625,69 @@ describe('ZaloClient', () => {
     const mockFactory = () => ({
       loginQR: async (_opts: any, callback: any) => {
         callCount++;
+
         if (callCount === 1) {
+          // Attempt #1 receives credentials but SDK never settles.
           callback1 = callback;
+          return new Promise(() => { });
         }
-        return new Promise(() => {});
+
+        // Attempt #2 resolves normally BUT deliberately receives no type-4
+        // credentials event. Therefore it must fail with missing credentials
+        // instead of reusing credentials from attempt #1.
+        return {
+          getOwnId: async () => 'uid-attempt-2',
+        };
       },
     });
 
     const client = new ZaloClient({}, mockFactory);
 
-    // Login attempt 1 receives credentials but doesn't finish
+    // Attempt #1 starts and captures credentials.
     const p1 = client.loginQR();
-    p1.catch(() => {}); // Catch active superseded rejection
-    callback1({ type: 4, data: { cookie: ['stale_cookie'], imei: 'stale_imei', userAgent: 'stale_ua' } });
 
-    // Login attempt 2 starts without receiving credentials
+    callback1({
+      type: 4,
+      data: {
+        cookie: ['stale_cookie'],
+        imei: 'stale_imei',
+        userAgent: 'stale_ua',
+      },
+    });
+
+    // Attempt #2 supersedes attempt #1.
     const p2 = client.loginQR();
 
-    // Assert attempt 2 fails with credentials missing, rather than picking up stale credentials
-    await assert.rejects(p2, { message: 'QR login completed but session credentials were not captured' });
-  });
+    // Old login must terminate promptly.
+    await assert.rejects(p1, {
+      message: 'QR login was superseded by a newer login attempt',
+    });
 
+    // New login has no credentials of its own.
+    // It MUST NOT inherit stale credentials from attempt #1.
+    await assert.rejects(p2, {
+      message:
+        'QR login completed but session credentials were not captured',
+    });
+  });
   it('29. Security Test: Serialized public QR events never contain credentials or action functions', async () => {
     const mockFactory = () => ({
       loginQR: async (_opts: any, callback: any) => {
         callback({
           type: 0,
           data: { image: 'qr-image' },
-          actions: { retry: () => {}, abort: () => {} },
+          actions: { retry: () => { }, abort: () => { } },
         });
         callback({
           type: 1,
           data: null,
-          actions: { retry: () => {}, abort: () => {} },
+          actions: { retry: () => { }, abort: () => { } },
         });
         callback({
           type: 4,
           data: { cookie: 'SECRET_COOKIE', imei: 'SECRET_IMEI', userAgent: 'SECRET_UA' },
         });
-        return new Promise(() => {});
+        return new Promise(() => { });
       },
     });
 
@@ -702,7 +726,7 @@ describe('ZaloClient', () => {
             },
           },
         });
-        return new Promise(() => {}); // Pending
+        return new Promise(() => { }); // Pending
       },
     });
 
@@ -746,7 +770,7 @@ describe('ZaloClient', () => {
         callCount++;
         if (callCount === 1) {
           // Attempt #1 never settles sdkPromise
-          return new Promise(() => {});
+          return new Promise(() => { });
         } else {
           // Attempt #2 succeeds
           callback({
