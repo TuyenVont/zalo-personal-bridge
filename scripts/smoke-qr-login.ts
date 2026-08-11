@@ -44,11 +44,7 @@ function handleQrEvent(event: ZaloQrEvent): void {
     }
 
     case 'qr_scanned': {
-      if (event.displayName) {
-        console.log(`[QR] Scanned by: ${event.displayName}`);
-      } else {
-        console.log('[QR] Scanned');
-      }
+      console.log('[QR] Scanned');
       break;
     }
 
