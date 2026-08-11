@@ -1,11 +1,15 @@
 import { ZaloClient } from './client.js';
 
 import type {
+  CapturedCredentials,
   IZaloConnectionReader,
+  IZaloSessionStore,
+  PersistedZaloSession,
   ZaloAccountStatus,
   ZaloInstance,
   ZaloLoginResult,
   ZaloQrEvent,
+  ZaloSessionLoginResult,
 } from './types.js';
 
 /**
@@ -18,6 +22,22 @@ export type IQrClientLike = {
     onQrEvent?: (event: ZaloQrEvent) => void,
   ): Promise<ZaloLoginResult>;
 };
+
+/**
+ * Minimal session client contract used by ZaloAccountPool.
+ */
+export type ISessionClientLike = {
+  loginWithSession(
+    credentials: CapturedCredentials
+  ): Promise<ZaloSessionLoginResult>;
+};
+
+/**
+ * Options container for initializing ZaloAccountPool.
+ */
+export interface ZaloAccountPoolOptions {
+  sessionStore?: IZaloSessionStore;
+}
 
 /**
  * In-memory pool for managing personal Zalo account connection instances.
@@ -34,6 +54,12 @@ export class ZaloAccountPool implements IZaloConnectionReader {
    * account execute sequentially while different accounts stay independent.
    */
   private readonly locks = new Map<string, Promise<void>>();
+
+  private readonly sessionStore?: IZaloSessionStore;
+
+  constructor(options: ZaloAccountPoolOptions = {}) {
+    this.sessionStore = options.sessionStore;
+  }
 
   /**
    * Retrieve a Zalo instance by accountId.
@@ -183,15 +209,6 @@ export class ZaloAccountPool implements IZaloConnectionReader {
 
   /**
    * Start a fresh QR login for a personal Zalo account.
-   *
-   * This phase handles only:
-   * - QR lifecycle
-   * - account status
-   * - api handle
-   * - Zalo UID
-   *
-   * Session credentials returned by ZaloClient are deliberately NOT stored
-   * here. Secure persistence belongs to Phase A4.
    */
   public async startQrLogin(
     accountId: string,
@@ -199,12 +216,6 @@ export class ZaloAccountPool implements IZaloConnectionReader {
     clientFactory?: () => IQrClientLike,
   ): Promise<ZaloInstance> {
     return this.withAccountLock(accountId, async () => {
-      /**
-       * A manually-started QR login is a fresh authentication attempt.
-       *
-       * Clear any stale UID/API left from an older connection before
-       * beginning authentication.
-       */
       this.createOrGetInstance(accountId);
 
       this.updateInstance(accountId, {
@@ -213,12 +224,6 @@ export class ZaloAccountPool implements IZaloConnectionReader {
         api: null,
       });
 
-      /**
-       * Once QR expires or is declined, that QR session is terminal.
-       *
-       * We preserve needs_qr even if the SDK subsequently rejects or
-       * unexpectedly resolves.
-       */
       let reachedTerminalQrState = false;
 
       try {
@@ -233,7 +238,6 @@ export class ZaloAccountPool implements IZaloConnectionReader {
                 this.updateInstance(accountId, {
                   status: 'qr_pending',
                 });
-
                 break;
               }
 
@@ -241,39 +245,25 @@ export class ZaloAccountPool implements IZaloConnectionReader {
                 this.updateInstance(accountId, {
                   status: 'connecting',
                 });
-
                 break;
               }
 
               case 'qr_expired':
               case 'qr_declined': {
                 reachedTerminalQrState = true;
-
                 this.updateInstance(accountId, {
                   status: 'needs_qr',
                   api: null,
                   zaloUid: null,
                 });
-
                 break;
               }
             }
 
-            /**
-             * Forward only normalized public QR events.
-             *
-             * ZaloQrEvent does not contain cookie, imei or userAgent.
-             */
             onQrEvent?.(event);
           },
         );
 
-        /**
-         * Defensive guard.
-         *
-         * If the QR was already expired/declined, a strange SDK/mock
-         * resolution must never revive that QR session into connected.
-         */
         if (reachedTerminalQrState) {
           this.updateInstance(accountId, {
             status: 'needs_qr',
@@ -286,14 +276,25 @@ export class ZaloAccountPool implements IZaloConnectionReader {
           );
         }
 
-        /**
-         * Credentials contained in result are intentionally ignored here.
-         *
-         * Phase A4 will persist:
-         * - cookie
-         * - imei
-         * - userAgent
-         */
+        if (this.sessionStore) {
+          try {
+            await this.sessionStore.save(accountId, {
+              version: 1,
+              accountId,
+              zaloUid: result.zaloUid,
+              credentials: result.credentials,
+              savedAt: new Date().toISOString(),
+            });
+          } catch (storageError) {
+            this.updateInstance(accountId, {
+              status: 'error',
+              api: null,
+              zaloUid: null,
+            });
+            throw storageError;
+          }
+        }
+
         const updated = this.updateInstance(accountId, {
           status: 'connected',
           zaloUid: result.zaloUid,
@@ -309,20 +310,12 @@ export class ZaloAccountPool implements IZaloConnectionReader {
         return updated;
       } catch (error) {
         if (reachedTerminalQrState) {
-          /**
-           * Keep the meaningful terminal status.
-           *
-           * Do not convert needs_qr into generic error.
-           */
           this.updateInstance(accountId, {
             status: 'needs_qr',
             api: null,
             zaloUid: null,
           });
         } else {
-          /**
-           * Unexpected SDK/runtime failure.
-           */
           this.updateInstance(accountId, {
             status: 'error',
             api: null,
@@ -331,6 +324,123 @@ export class ZaloAccountPool implements IZaloConnectionReader {
 
         throw error;
       }
+    });
+  }
+
+  /**
+   * Restore a Zalo account connection using encrypted persisted session.
+   */
+  public async restoreSession(
+    accountId: string,
+    clientFactory?: () => ISessionClientLike,
+  ): Promise<ZaloInstance> {
+    return this.withAccountLock(accountId, async () => {
+      this.createOrGetInstance(accountId);
+
+      this.updateInstance(accountId, {
+        status: 'connecting',
+        zaloUid: null,
+        api: null,
+      });
+
+      if (!this.sessionStore) {
+        this.updateInstance(accountId, {
+          status: 'error',
+          zaloUid: null,
+          api: null,
+        });
+        throw new Error('Zalo session store is not configured');
+      }
+
+      let persisted: PersistedZaloSession | null;
+      try {
+        persisted = await this.sessionStore.load(accountId);
+      } catch (loadError) {
+        this.updateInstance(accountId, {
+          status: 'error',
+          zaloUid: null,
+          api: null,
+        });
+        throw loadError;
+      }
+
+      if (!persisted) {
+        const updated = this.updateInstance(accountId, {
+          status: 'needs_qr',
+          zaloUid: null,
+          api: null,
+        });
+        return updated!;
+      }
+
+      let loginResult: ZaloSessionLoginResult;
+      try {
+        const client = clientFactory ? clientFactory() : new ZaloClient();
+        loginResult = await client.loginWithSession(persisted.credentials);
+      } catch (sdkError) {
+        this.updateInstance(accountId, {
+          status: 'error',
+          zaloUid: null,
+          api: null,
+        });
+        throw sdkError;
+      }
+
+      const returnedUid = loginResult.zaloUid ? loginResult.zaloUid.trim() : '';
+      const expectedUid = persisted.zaloUid ? persisted.zaloUid.trim() : '';
+
+      if (returnedUid === '' || returnedUid !== expectedUid) {
+        this.updateInstance(accountId, {
+          status: 'needs_qr',
+          zaloUid: null,
+          api: null,
+        });
+
+        await this.sessionStore.remove(accountId).catch(() => {});
+
+        throw new Error('Restored Zalo UID does not match persisted session');
+      }
+
+      const updated = this.updateInstance(accountId, {
+        status: 'connected',
+        zaloUid: returnedUid,
+        api: loginResult.api,
+      });
+
+      if (!updated) {
+        throw new Error(
+          `Zalo instance disappeared during session restore: ${accountId}`,
+        );
+      }
+
+      return updated;
+    });
+  }
+
+  /**
+   * Remove persisted session for an account and clear in-memory instance state.
+   */
+  public async clearSession(accountId: string): Promise<boolean> {
+    return this.withAccountLock(accountId, async () => {
+      this.createOrGetInstance(accountId);
+
+      if (!this.sessionStore) {
+        this.updateInstance(accountId, {
+          status: 'error',
+          zaloUid: null,
+          api: null,
+        });
+        throw new Error('Zalo session store is not configured');
+      }
+
+      const removed = await this.sessionStore.remove(accountId);
+      this.updateInstance(accountId, {
+        status: 'needs_qr',
+        zaloUid: null,
+        api: null,
+      });
+
+      return removed;
     });
   }
 }
