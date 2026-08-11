@@ -69,3 +69,25 @@ export interface ZaloLoginResult {
   zaloUid: string;
   credentials: CapturedCredentials;
 }
+
+/**
+ * Persisted Zalo account session data structure.
+ * Stored securely in encrypted storage for session restoration.
+ */
+export interface PersistedZaloSession {
+  version: 1;
+  accountId: string;
+  zaloUid: string;
+  credentials: CapturedCredentials;
+  savedAt: string;
+}
+
+/**
+ * Interface contract for Zalo session persistence storage.
+ */
+export interface IZaloSessionStore {
+  save(accountId: string, session: PersistedZaloSession): Promise<void>;
+  load(accountId: string): Promise<PersistedZaloSession | null>;
+  remove(accountId: string): Promise<boolean>;
+}
+
