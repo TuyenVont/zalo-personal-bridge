@@ -1,0 +1,31 @@
+{
+  "name": "zalo-personal-bridge",
+  "version": "1.0.0",
+  "description": "Personal Zalo connection layer bridge",
+  "main": "dist/zalo/index.js",
+  "type": "module",
+  "types": "dist/zalo/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "smoke:qr": "node --import tsx scripts/smoke-qr-login.ts",
+    "smoke:session": "node --import tsx scripts/smoke-session-reconnect.ts"
+  },
+  "keywords": [
+    "zalo",
+    "bridge",
+    "node",
+    "typescript"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "zca-js": "2.1.2"
+  }
+}
