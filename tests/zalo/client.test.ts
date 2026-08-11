@@ -797,4 +797,349 @@ describe('ZaloClient', () => {
     const res2 = await p2;
     assert.equal(res2.zaloUid, 'uid-attempt-2');
   });
+
+  describe('loginWithSession', () => {
+    const validCredentials = {
+      cookie: ['session_cookie_123'],
+      imei: 'valid-imei-456',
+      userAgent: 'valid-ua-789',
+    };
+
+    it('32. loginWithSession passes exact cookie/imei/userAgent into underlying Zalo.login', async () => {
+      let passedOptions: any = null;
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async (options: any) => {
+          passedOptions = options;
+          return { getOwnId: async () => 'uid-session-1' };
+        },
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      const res = await client.loginWithSession(validCredentials);
+
+      assert.deepEqual(passedOptions, {
+        cookie: ['session_cookie_123'],
+        imei: 'valid-imei-456',
+        userAgent: 'valid-ua-789',
+      });
+      assert.equal(res.zaloUid, 'uid-session-1');
+    });
+
+    it('33. successful session login returns api + zaloUid', async () => {
+      const mockApi = { getOwnId: async () => '  uid-session-2  ' };
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => mockApi,
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      const res = await client.loginWithSession(validCredentials);
+
+      assert.equal(res.api, mockApi);
+      assert.equal(res.zaloUid, 'uid-session-2');
+    });
+
+    it('34. credentials are not mutated', async () => {
+      const credentialsCopy = {
+        cookie: ['cookie_val'],
+        imei: 'imei_val',
+        userAgent: 'ua_val',
+      };
+      const frozenCredentials = Object.freeze({
+        cookie: Object.freeze(['cookie_val']),
+        imei: 'imei_val',
+        userAgent: 'ua_val',
+      });
+
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => ({ getOwnId: async () => 'uid-34' }),
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      await client.loginWithSession(frozenCredentials as any);
+
+      assert.deepEqual(frozenCredentials, credentialsCopy);
+    });
+
+    it('35. missing cookie is rejected before SDK call', async () => {
+      let sdkCalled = false;
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => {
+          sdkCalled = true;
+          return { getOwnId: async () => 'uid-35' };
+        },
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      await assert.rejects(
+        async () =>
+          client.loginWithSession({
+            cookie: null,
+            imei: 'imei-35',
+            userAgent: 'ua-35',
+          } as any),
+        { message: 'credentials.cookie is required' }
+      );
+      assert.equal(sdkCalled, false);
+    });
+
+    it('36. empty imei rejected before SDK call', async () => {
+      let sdkCalled = false;
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => {
+          sdkCalled = true;
+          return { getOwnId: async () => 'uid-36' };
+        },
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      await assert.rejects(
+        async () =>
+          client.loginWithSession({
+            cookie: ['c'],
+            imei: '   ',
+            userAgent: 'ua-36',
+          }),
+        { message: 'credentials.imei must be a non-empty string' }
+      );
+      assert.equal(sdkCalled, false);
+    });
+
+    it('37. empty userAgent rejected before SDK call', async () => {
+      let sdkCalled = false;
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => {
+          sdkCalled = true;
+          return { getOwnId: async () => 'uid-37' };
+        },
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      await assert.rejects(
+        async () =>
+          client.loginWithSession({
+            cookie: ['c'],
+            imei: 'imei-37',
+            userAgent: '',
+          }),
+        { message: 'credentials.userAgent must be a non-empty string' }
+      );
+      assert.equal(sdkCalled, false);
+    });
+
+    it('38. underlying login error propagates without credential leakage', async () => {
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => {
+          throw new Error('SDK network error reconnecting session');
+        },
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      const secretCreds = {
+        cookie: ['secret_cookie_token_999'],
+        imei: 'secret_imei_device_888',
+        userAgent: 'secret_ua_browser_777',
+      };
+
+      try {
+        await client.loginWithSession(secretCreds);
+        assert.fail('Should have rejected');
+      } catch (err: any) {
+        assert.equal(err.message, 'SDK network error reconnecting session');
+        const serialized = JSON.stringify(err, Object.getOwnPropertyNames(err));
+        assert.equal(serialized.includes('secret_cookie_token_999'), false);
+        assert.equal(serialized.includes('secret_imei_device_888'), false);
+        assert.equal(serialized.includes('secret_ua_browser_777'), false);
+      }
+    });
+
+    it('39. API without getOwnId is rejected', async () => {
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => ({ invalidApi: true }),
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      await assert.rejects(
+        async () => client.loginWithSession(validCredentials),
+        {
+          message:
+            'Session login returned invalid API handle without getOwnId method',
+        }
+      );
+    });
+
+    it('40. invalid/empty UID rejected', async () => {
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => ({ getOwnId: async () => '   ' }),
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      await assert.rejects(
+        async () => client.loginWithSession(validCredentials),
+        {
+          message:
+            'Session login failed: getOwnId returned an invalid or empty UID',
+        }
+      );
+    });
+
+    it('41. session login does not expose credentials in result', async () => {
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => ({ getOwnId: async () => 'uid-41' }),
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      const res = await client.loginWithSession(validCredentials);
+
+      assert.equal('credentials' in res, false);
+      assert.equal('cookie' in res, false);
+      assert.equal('imei' in res, false);
+      assert.equal('userAgent' in res, false);
+    });
+
+    it('42. starting session login supersedes a pending QR login promptly', async () => {
+      const mockFactory = () => ({
+        loginQR: async () => new Promise(() => {}), // never resolves
+        login: async () => ({ getOwnId: async () => 'uid-42' }),
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      const pQr = client.loginQR();
+
+      const pSession = client.loginWithSession(validCredentials);
+
+      await assert.rejects(pQr, {
+        message: 'QR login was superseded by a newer login attempt',
+      });
+
+      const resSession = await pSession;
+      assert.equal(resSession.zaloUid, 'uid-42');
+    });
+
+    it('43. stale QR callbacks after session login starts are ignored', async () => {
+      let qrCallback: any = null;
+      const mockFactory = () => ({
+        loginQR: async (_opts: any, cb: any) => {
+          qrCallback = cb;
+          return new Promise(() => {});
+        },
+        login: async () => ({ getOwnId: async () => 'uid-43' }),
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      const events: any[] = [];
+      const pQr = client.loginQR((e) => events.push(e));
+
+      // Trigger session login which supersedes QR login
+      const pSession = client.loginWithSession(validCredentials);
+      await assert.rejects(pQr, {
+        message: 'QR login was superseded by a newer login attempt',
+      });
+
+      // Emit late QR events from old QR login
+      qrCallback({ type: 0, data: { image: 'stale-qr' } });
+      qrCallback({
+        type: 4,
+        data: { cookie: ['stale_c'], imei: 'stale_i', userAgent: 'stale_u' },
+      });
+
+      const resSession = await pSession;
+      assert.equal(resSession.zaloUid, 'uid-43');
+      assert.equal(events.length, 0); // Stale callback ignored
+    });
+
+    it('44. starting newer QR login prevents older pending session login from returning success', async () => {
+      let resolveSessionSdk: any = null;
+      const mockFactory = () => ({
+        loginQR: async (_opts: any, callback: any) => {
+          callback({
+            type: 4,
+            data: { cookie: ['c44'], imei: 'i44', userAgent: 'u44' },
+          });
+          return { getOwnId: async () => 'uid-44-qr' };
+        },
+        login: async () => {
+          return new Promise((resolve) => {
+            resolveSessionSdk = resolve;
+          });
+        },
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      const pSession = client.loginWithSession(validCredentials);
+
+      // Start newer QR login while session login is pending
+      const pQr = client.loginQR();
+
+      // Old session login must reject promptly as superseded
+      await assert.rejects(pSession, {
+        message: 'Session login was superseded by a newer login attempt',
+      });
+
+      // Late resolve of old session sdkPromise must not crash or supersede QR login
+      if (resolveSessionSdk) {
+        resolveSessionSdk({ getOwnId: async () => 'uid-44-stale-session' });
+      }
+
+      const resQr = await pQr;
+      assert.equal(resQr.zaloUid, 'uid-44-qr');
+    });
+
+    it('45. serialized returned/error data contains no cookie, imei or userAgent secrets', async () => {
+      const secretCreds = {
+        cookie: ['secret_token_x99'],
+        imei: 'secret_imei_y88',
+        userAgent: 'secret_ua_z77',
+      };
+
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: async () => ({ getOwnId: async () => 'uid-45' }),
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+      const res = await client.loginWithSession(secretCreds);
+
+      const serializedRes = JSON.stringify(res);
+      assert.equal(serializedRes.includes('secret_token_x99'), false);
+      assert.equal(serializedRes.includes('secret_imei_y88'), false);
+      assert.equal(serializedRes.includes('secret_ua_z77'), false);
+    });
+
+    it('46. underlying login() throwing synchronously cleans up active abort state so next login succeeds', async () => {
+      let callCount = 0;
+      const mockFactory = () => ({
+        loginQR: async () => null,
+        login: (options: any) => {
+          callCount++;
+          if (callCount === 1) {
+            throw new Error('Synchronous SDK initialization failure');
+          }
+          return Promise.resolve({ getOwnId: async () => 'uid-46-recovered' });
+        },
+      });
+
+      const client = new ZaloClient({}, mockFactory as any);
+
+      // Attempt 1: SDK throws synchronously
+      await assert.rejects(
+        async () => client.loginWithSession(validCredentials),
+        { message: 'Synchronous SDK initialization failure' }
+      );
+
+      // Attempt 2: Must succeed cleanly on the same ZaloClient instance
+      const res = await client.loginWithSession(validCredentials);
+      assert.equal(res.zaloUid, 'uid-46-recovered');
+    });
+  });
 });
+

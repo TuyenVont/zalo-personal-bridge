@@ -3,6 +3,7 @@ import {
   CapturedCredentials,
   ZaloLoginResult,
   ZaloQrEvent,
+  ZaloSessionLoginResult,
 } from './types.js';
 
 const require = createRequire(import.meta.url);
@@ -17,6 +18,11 @@ export type ZaloFactory = (options: ZaloFactoryOptions) => {
     options: Record<string, never>,
     callback: (event: any) => void
   ): Promise<any>;
+  login(options: {
+    cookie: any;
+    imei: string;
+    userAgent: string;
+  }): Promise<any>;
 };
 
 const defaultZaloFactory: ZaloFactory = (options) => {
@@ -61,6 +67,115 @@ export class ZaloClient {
       logging: this.options.logging,
       selfListen: this.options.selfListen,
     });
+  }
+
+  /**
+   * Reconnects using previously captured session credentials.
+   * Validates credentials and returned API, resolving ZaloSessionLoginResult.
+   */
+  public async loginWithSession(
+    credentials: CapturedCredentials
+  ): Promise<ZaloSessionLoginResult> {
+    if (!credentials || typeof credentials !== 'object') {
+      throw new Error('credentials object is required');
+    }
+
+    if (credentials.cookie === undefined || credentials.cookie === null) {
+      throw new Error('credentials.cookie is required');
+    }
+
+    if (
+      typeof credentials.imei !== 'string' ||
+      credentials.imei.trim() === ''
+    ) {
+      throw new Error('credentials.imei must be a non-empty string');
+    }
+
+    if (
+      typeof credentials.userAgent !== 'string' ||
+      credentials.userAgent.trim() === ''
+    ) {
+      throw new Error('credentials.userAgent must be a non-empty string');
+    }
+
+    // Actively terminate any previously active login attempt on this client instance
+    if (this.activeLoginAbort) {
+      this.activeLoginAbort(
+        new Error('Login was superseded by a newer login attempt')
+      );
+      this.activeLoginAbort = null;
+    }
+
+    const epoch = ++this.loginEpoch;
+
+    let isTerminal = false;
+    let rejectTerminal!: (reason: Error) => void;
+    const terminalPromise = new Promise<never>((_, reject) => {
+      rejectTerminal = reject;
+    });
+    terminalPromise.catch(() => {});
+
+    const triggerTerminal = (err: Error) => {
+      if (isTerminal || epoch !== this.loginEpoch) return;
+      isTerminal = true;
+      rejectTerminal(err);
+    };
+
+    this.activeLoginAbort = (reason: Error) => {
+      triggerTerminal(reason);
+    };
+
+    const sdkPromise = Promise.resolve().then(() =>
+      this.zaloInstance.login({
+        cookie: credentials.cookie,
+        imei: credentials.imei,
+        userAgent: credentials.userAgent,
+      })
+    );
+
+    const executionPromise = (async () => {
+      const api = await sdkPromise;
+
+      if (epoch !== this.loginEpoch) {
+        throw new Error('Session login was superseded by a newer login attempt');
+      }
+
+      if (isTerminal) {
+        throw new Error('Session login failed: session reached a terminal state');
+      }
+
+      if (!api || typeof api.getOwnId !== 'function') {
+        throw new Error(
+          'Session login returned invalid API handle without getOwnId method'
+        );
+      }
+
+      const zaloUid = await api.getOwnId();
+      if (!zaloUid || typeof zaloUid !== 'string' || zaloUid.trim() === '') {
+        throw new Error(
+          'Session login failed: getOwnId returned an invalid or empty UID'
+        );
+      }
+
+      return {
+        api,
+        zaloUid: zaloUid.trim(),
+      };
+    })();
+    executionPromise.catch(() => {});
+
+    try {
+      return await Promise.race([executionPromise, terminalPromise]);
+    } catch (err) {
+      if (epoch !== this.loginEpoch) {
+        throw new Error('Session login was superseded by a newer login attempt');
+      }
+      throw err;
+    } finally {
+      if (this.activeLoginAbort && epoch === this.loginEpoch) {
+        this.activeLoginAbort = null;
+      }
+    }
   }
 
   /**

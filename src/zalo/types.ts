@@ -71,6 +71,15 @@ export interface ZaloLoginResult {
 }
 
 /**
+ * Successful session login result payload.
+ * Credentials are not returned since caller already owns them.
+ */
+export interface ZaloSessionLoginResult {
+  api: any;
+  zaloUid: string;
+}
+
+/**
  * Persisted Zalo account session data structure.
  * Stored securely in encrypted storage for session restoration.
  */
