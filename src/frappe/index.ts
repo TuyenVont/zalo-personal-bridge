@@ -36,5 +36,21 @@ export {
   buildZaloMessageKey,
   ZaloFrappeSchemaContractError,
 } from './zalo-identity.js';
+export {
+  mapCustomFieldDefinition,
+  normalizeFrappeCheck,
+  runZaloSchemaMigration,
+  unwrapEffectiveMetaResponse,
+  ZaloSchemaMigrationError,
+  type FrappeCustomFieldPayload,
+  type FrappePropertySetterPayload,
+  type MigrationActionType,
+  type MigrationPlanItem,
+  type MigrationResult,
+  type ZaloSchemaMigrationDependencies,
+} from './zalo-schema-migration.js';
+
+
+
 
 
