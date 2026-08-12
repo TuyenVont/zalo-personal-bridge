@@ -12,7 +12,8 @@
     "smoke:qr": "node --import tsx scripts/smoke-qr-login.ts",
     "smoke:session": "node --import tsx scripts/smoke-session-reconnect.ts",
     "smoke:message": "node --import tsx scripts/smoke-message-listener.ts",
-    "smoke:frappe": "node --import tsx scripts/smoke-frappe-connection.ts"
+    "smoke:frappe": "node --import tsx scripts/smoke-frappe-connection.ts",
+    "smoke:frappe-schema": "node --import tsx scripts/smoke-frappe-schema.ts"
   },
 
   "keywords": [
