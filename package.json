@@ -11,8 +11,10 @@
     "test": "node --import tsx --test tests/**/*.test.ts",
     "smoke:qr": "node --import tsx scripts/smoke-qr-login.ts",
     "smoke:session": "node --import tsx scripts/smoke-session-reconnect.ts",
-    "smoke:message": "node --import tsx scripts/smoke-message-listener.ts"
+    "smoke:message": "node --import tsx scripts/smoke-message-listener.ts",
+    "smoke:frappe": "node --import tsx scripts/smoke-frappe-connection.ts"
   },
+
   "keywords": [
     "zalo",
     "bridge",
