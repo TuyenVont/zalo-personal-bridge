@@ -4,7 +4,14 @@
 export type ThreadTypeCategory = 'user' | 'group';
 
 /**
- * Immutable normalized Zalo message model (Developer B Phase B2.1).
+ * Message direction in normalized Zalo messages:
+ * - 'incoming': received from another user/contact (wrapper.isSelf === false)
+ * - 'outgoing': sent by the logged-in bridge account (wrapper.isSelf === true)
+ */
+export type ZaloMessageDirection = 'incoming' | 'outgoing';
+
+/**
+ * Immutable normalized Zalo message model (Developer B Phase B2.2).
  * Represents a sanitized, normalized internal domain message stripped of raw SDK references.
  */
 export interface NormalizedZaloMessage {
@@ -29,6 +36,10 @@ export interface NormalizedZaloMessage {
   /** Thread type category: 'user' (direct message) or 'group' */
   readonly threadType: ThreadTypeCategory;
 
+  /** Message direction: 'incoming' or 'outgoing' (derived strictly from SDK wrapper isSelf) */
+  readonly direction: ZaloMessageDirection;
+
   /** Original raw Zalo message type string (e.g., 'webchat', 'chat.photo', etc.) if available */
   readonly msgType: string | null;
 }
+

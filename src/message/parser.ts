@@ -1,3 +1,4 @@
+import { detectZaloMessageDirection } from './direction.js';
 import type { NormalizedZaloMessage, ThreadTypeCategory } from './normalized.js';
 
 /**
@@ -9,13 +10,14 @@ import type { NormalizedZaloMessage, ThreadTypeCategory } from './normalized.js'
  * 2. Accepts ONLY live listener message wrapper objects containing { type, threadId, isSelf, data }.
  * 3. Extracts threadId ONLY from wrapper.threadId as a non-empty string.
  * 4. Extracts threadType ONLY from wrapper.type (0 -> 'user', 1 -> 'group').
- * 5. Requires string data.msgId and data.uidFrom identifiers (no numeric conversion).
- * 6. Requires string data.ts consisting of digits, normalized to safe positive integer number.
- * 7. Preserves the exact accountId value passed in.
- * 8. Does not mutate the raw input object.
- * 9. Does not retain references to the raw event payload.
- * 10. Does not leak raw payload contents in thrown or logged errors.
- * 11. Returns null for unwrapped payloads, malformed structure, or unsupported wrapper types.
+ * 5. Extracts direction ONLY from wrapper.isSelf (true -> 'outgoing', false -> 'incoming').
+ * 6. Requires string data.msgId and data.uidFrom identifiers (no numeric conversion).
+ * 7. Requires string data.ts consisting of digits, normalized to safe positive integer number.
+ * 8. Preserves the exact accountId value passed in.
+ * 9. Does not mutate the raw input object.
+ * 10. Does not retain references to the raw event payload.
+ * 11. Does not leak raw payload contents in thrown or logged errors.
+ * 12. Returns null for unwrapped payloads, malformed structure, or unsupported wrapper types.
  *
  * @param accountId - Target bridge Zalo account ID.
  * @param rawMessage - Raw event payload received from Zalo SDK listener.
@@ -31,6 +33,12 @@ export function parseZaloRawMessage(
     }
 
     if (rawMessage === null || typeof rawMessage !== 'object') {
+      return null;
+    }
+
+    // Extract direction strictly from wrapper.isSelf (returns null if missing or non-boolean)
+    const direction = detectZaloMessageDirection(rawMessage);
+    if (direction === null) {
       return null;
     }
 
@@ -120,6 +128,7 @@ export function parseZaloRawMessage(
       timestamp: tsNum,
       textContent,
       threadType,
+      direction,
       msgType,
     });
   } catch {
@@ -127,3 +136,4 @@ export function parseZaloRawMessage(
     return null;
   }
 }
+

@@ -265,6 +265,7 @@ describe('parseZaloRawMessage (B2.1 Strictness Corrections)', () => {
     const keys = Object.keys(result!);
     assert.deepEqual(keys.sort(), [
       'accountId',
+      'direction',
       'messageId',
       'msgType',
       'senderId',
@@ -314,6 +315,7 @@ describe('parseZaloRawMessage (B2.1 Strictness Corrections)', () => {
     const throwingRawMsg = {
       type: 0,
       threadId: 't1',
+      isSelf: false,
       get data() {
         throw new Error('Secret credentials or sensitive payload error');
       },
