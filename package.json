@@ -13,7 +13,8 @@
     "smoke:session": "node --import tsx scripts/smoke-session-reconnect.ts",
     "smoke:message": "node --import tsx scripts/smoke-message-listener.ts",
     "smoke:frappe": "node --import tsx scripts/smoke-frappe-connection.ts",
-    "smoke:frappe-schema": "node --import tsx scripts/smoke-frappe-schema.ts"
+    "smoke:frappe-schema": "node --import tsx scripts/smoke-frappe-schema.ts",
+    "smoke:frappe-persistence-discovery": "node --import tsx scripts/smoke-frappe-persistence-discovery.ts"
   },
 
   "keywords": [
