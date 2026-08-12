@@ -76,3 +76,35 @@ export class FrappeRequestError extends FrappeError {
   }
 }
 
+export type FrappeDocument = Readonly<Record<string, unknown>>;
+
+export type FrappeFilter = readonly [
+  field: string,
+  operator: string,
+  value: unknown
+];
+
+export interface FrappeListOptions {
+  readonly fields?: readonly string[];
+  readonly filters?: readonly FrappeFilter[];
+  readonly orFilters?: readonly FrappeFilter[];
+  readonly orderBy?: string;
+  readonly limitStart?: number;
+  readonly limitPageLength?: number;
+}
+
+export class FrappeResourceError extends FrappeError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FrappeResourceError';
+  }
+}
+
+export class FrappeResponseError extends FrappeError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FrappeResponseError';
+  }
+}
+
+
