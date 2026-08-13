@@ -49,8 +49,15 @@ export {
   type MigrationResult,
   type ZaloSchemaMigrationDependencies,
 } from './zalo-schema-migration.js';
-
-
-
-
-
+export {
+  formatFrappeDatetime,
+  mapZaloConversationPayload,
+  mapZaloMessagePayload,
+  ZaloMessageMapperError,
+} from './zalo-message-mapper.js';
+export {
+  ZaloMessagePersistenceError,
+  ZaloMessageRepository,
+  type ZaloMessagePersistenceResult,
+  type ZaloMessageRepositoryOptions,
+} from './zalo-message-repository.js';
